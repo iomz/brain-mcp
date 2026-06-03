@@ -1,0 +1,26 @@
+---
+services:
+  brain-mcp:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      BRAIN_ROOT: /brain
+      BRAIN_MCP_ADDR: 0.0.0.0:8787
+      BRAIN_MCP_TOKEN: ${BRAIN_MCP_TOKEN}
+      BRAIN_MCP_WRITABLE_PATHS: ${BRAIN_MCP_WRITABLE_PATHS:-Knowledge/,System/,Active/,Archive/}
+      BRAIN_MCP_READONLY_PATHS: ${BRAIN_MCP_READONLY_PATHS:-Journal/}
+      BRAIN_MCP_REQUIRE_GIT: ${BRAIN_MCP_REQUIRE_GIT:-true}
+    volumes:
+      - ${BRAIN_ROOT_HOST:-${BRAIN_ROOT:-/tmp/brain-mcp-missing-brain-root}}:/brain
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - brain-mcp
+    command:
+      - tunnel
+      - run
+      - --token
+      - ${CLOUDFLARED_TUNNEL_TOKEN}

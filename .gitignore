@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+.gocache/
+*.pem
+*.key
+*.json
+cloudflared/
