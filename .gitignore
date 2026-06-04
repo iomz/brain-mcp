@@ -6,3 +6,4 @@
 *.key
 *.json
 cloudflared/
+.DS_Store

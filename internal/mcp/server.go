@@ -20,6 +20,25 @@ func NewServer(vault *brain.Vault) *Server {
 	return &Server{vault: vault}
 }
 
+type AuthKind string
+
+const (
+	AuthKindBearerStatic AuthKind = "bearer_static"
+	AuthKindOAuth        AuthKind = "oauth"
+	AuthKindAnonymous    AuthKind = "anonymous"
+)
+
+type AuthContext struct {
+	Subject   string
+	Email     string
+	Groups    []string
+	Scopes    []string
+	Kind      AuthKind
+	Issuer    string
+	Audience  []string
+	ExpiresAt int64
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -67,7 +86,10 @@ func (s *Server) Run(r io.Reader, w io.Writer) error {
 			}
 			continue
 		}
-		resp := s.handle(req)
+		resp := s.handle(req, AuthContext{
+			Kind:   AuthKindBearerStatic,
+			Scopes: []string{"brain:read", "brain:write", "brain:git", "brain:admin"},
+		})
 		if resp != nil {
 			if err := enc.Encode(resp); err != nil {
 				return err
@@ -78,20 +100,27 @@ func (s *Server) Run(r io.Reader, w io.Writer) error {
 }
 
 func (s *Server) HandleBytes(data []byte) ([]byte, error) {
+	return s.HandleBytesWithAuth(data, AuthContext{
+		Kind:   AuthKindBearerStatic,
+		Scopes: []string{"brain:read", "brain:write", "brain:git", "brain:admin"},
+	})
+}
+
+func (s *Server) HandleBytesWithAuth(data []byte, auth AuthContext) ([]byte, error) {
 	var req request
 	if err := json.Unmarshal(data, &req); err != nil {
 		log.Printf("mcp_parse_error transport=http bytes=%d error=%q", len(data), err)
 		resp := response{JSONRPC: "2.0", Error: &responseError{Code: -32700, Message: err.Error()}}
 		return json.Marshal(resp)
 	}
-	resp := s.handle(req)
+	resp := s.handle(req, auth)
 	if resp == nil {
 		return nil, nil
 	}
 	return json.Marshal(resp)
 }
 
-func (s *Server) handle(req request) *response {
+func (s *Server) handle(req request, auth AuthContext) *response {
 	start := time.Now()
 	toolName := requestToolName(req)
 	log.Printf("mcp_request method=%s tool=%s has_id=%t", req.Method, logValue(toolName), req.HasID)
@@ -117,10 +146,14 @@ func (s *Server) handle(req request) *response {
 	case "tools/list":
 		resp.Result = map[string]any{"tools": tools()}
 	case "tools/call":
-		result, err := s.callTool(req.Params)
+		result, err := s.callTool(req.Params, auth)
 		if err != nil {
 			log.Printf("mcp_tool_error tool=%s error=%q", logValue(toolName), err)
-			resp.Error = &responseError{Code: -32000, Message: err.Error()}
+			code := -32000
+			if isInsufficientScope(err) {
+				code = -32003
+			}
+			resp.Error = &responseError{Code: code, Message: err.Error()}
 			return resp
 		}
 		log.Printf("mcp_tool_result tool=%s status=ok", logValue(toolName))
@@ -151,13 +184,16 @@ func logValue(value string) string {
 	return value
 }
 
-func (s *Server) callTool(raw json.RawMessage) (any, error) {
+func (s *Server) callTool(raw json.RawMessage, auth AuthContext) (any, error) {
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, err
+	}
+	if scope := RequiredScope(params.Name); scope != "" && !HasScope(auth.Scopes, scope) {
+		return nil, insufficientScopeError{scope: scope}
 	}
 	switch params.Name {
 	case "brain_read_note":
@@ -333,31 +369,95 @@ func (s *Server) callTool(raw json.RawMessage) (any, error) {
 	}
 }
 
+type insufficientScopeError struct {
+	scope string
+}
+
+func (e insufficientScopeError) Error() string {
+	return "insufficient scope: " + e.scope
+}
+
+func isInsufficientScope(err error) bool {
+	_, ok := err.(insufficientScopeError)
+	return ok
+}
+
+func RequiredScope(toolName string) string {
+	switch toolName {
+	case "brain_read_note", "brain_list_notes", "brain_get_section", "brain_show_diff":
+		return "brain:read"
+	case "brain_apply_patch", "brain_write_note", "brain_append_section", "brain_replace_section", "brain_upsert_section", "brain_delete_duplicate_section", "brain_replace_text":
+		return "brain:write"
+	case "brain_git_status", "brain_git_diff", "brain_git_commit":
+		return "brain:git"
+	default:
+		return ""
+	}
+}
+
+func HasScope(scopes []string, want string) bool {
+	for _, scope := range scopes {
+		if scope == want || scope == "brain:admin" {
+			return true
+		}
+	}
+	return false
+}
+
 func toolResult(v any) map[string]any {
 	data, _ := json.Marshal(v)
 	return map[string]any{
 		"content": []map[string]string{
 			{"type": "text", "text": string(data)},
 		},
+		"structuredContent": v,
 	}
 }
 
 func tools() []map[string]any {
 	stringSchema := map[string]string{"type": "string"}
+	boolSchema := map[string]string{"type": "boolean"}
+	stringArraySchema := map[string]any{"type": "array", "items": stringSchema}
+	readNoteOutput := objectSchema(map[string]any{"path": stringSchema, "content": stringSchema}, []string{"path", "content"})
+	listNotesOutput := objectSchema(map[string]any{"notes": stringArraySchema}, []string{"notes"})
+	diffOutput := objectSchema(map[string]any{"path": stringSchema, "diff": stringSchema}, []string{"path", "diff"})
+	writeOutput := objectSchema(map[string]any{"success": boolSchema, "path": stringSchema, "diff": stringSchema}, []string{"success", "path", "diff"})
+	statusOutput := objectSchema(map[string]any{"status": stringSchema}, []string{"status"})
+	gitDiffOutput := objectSchema(map[string]any{"diff": stringSchema}, []string{"diff"})
+	commitOutput := objectSchema(map[string]any{"hash": stringSchema}, []string{"hash"})
 	return []map[string]any{
-		{"name": "brain_read_note", "description": "Read a Markdown note by relative path.", "inputSchema": objectSchema(map[string]any{"path": stringSchema}, []string{"path"})},
-		{"name": "brain_list_notes", "description": "List Markdown notes under a directory prefix.", "inputSchema": objectSchema(map[string]any{"prefix": stringSchema}, []string{})},
-		{"name": "brain_show_diff", "description": "Show unified diff between current and proposed content.", "inputSchema": objectSchema(map[string]any{"path": stringSchema, "new_content": stringSchema}, []string{"path", "new_content"})},
-		{"name": "brain_apply_patch", "description": "Apply proposed Markdown content after producing a diff.", "inputSchema": objectSchema(map[string]any{"path": stringSchema, "proposed_content": stringSchema}, []string{"path", "proposed_content"})},
-		{"name": "brain_append_section", "description": "Append Markdown content to an existing heading section.", "inputSchema": objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema}, []string{"path", "heading", "content"})},
-		{"name": "brain_get_section", "description": "Read one Markdown section by exact heading line.", "inputSchema": objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema}, []string{"path", "heading"})},
-		{"name": "brain_replace_section", "description": "Replace one Markdown section by exact heading line.", "inputSchema": objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema}, []string{"path", "heading", "content"})},
-		{"name": "brain_upsert_section", "description": "Replace an exact heading section, or insert it under an optional parent heading.", "inputSchema": objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema, "parent_heading": stringSchema}, []string{"path", "heading", "content"})},
-		{"name": "brain_delete_duplicate_section", "description": "Delete duplicate exact heading sections while keeping first or last.", "inputSchema": objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "keep": stringSchema}, []string{"path", "heading", "keep"})},
-		{"name": "brain_replace_text", "description": "Replace one exact text occurrence in a Markdown note.", "inputSchema": objectSchema(map[string]any{"path": stringSchema, "old_text": stringSchema, "new_text": stringSchema}, []string{"path", "old_text", "new_text"})},
-		{"name": "brain_git_status", "description": "Return git status for the Brain repository.", "inputSchema": objectSchema(map[string]any{}, []string{})},
-		{"name": "brain_git_diff", "description": "Return git diff for the Brain repository.", "inputSchema": objectSchema(map[string]any{}, []string{})},
-		{"name": "brain_git_commit", "description": "Commit current Brain repository changes and return the commit hash.", "inputSchema": objectSchema(map[string]any{"message": stringSchema}, []string{"message"})},
+		tool("brain_read_note", "Read a Markdown note by relative path.", objectSchema(map[string]any{"path": stringSchema}, []string{"path"}), readNoteOutput, true, "brain:read"),
+		tool("brain_list_notes", "List Markdown notes under a directory prefix.", objectSchema(map[string]any{"prefix": stringSchema}, []string{}), listNotesOutput, true, "brain:read"),
+		tool("brain_show_diff", "Show unified diff between current and proposed content.", objectSchema(map[string]any{"path": stringSchema, "new_content": stringSchema}, []string{"path", "new_content"}), diffOutput, true, "brain:read"),
+		tool("brain_apply_patch", "Apply proposed Markdown content after producing a diff.", objectSchema(map[string]any{"path": stringSchema, "proposed_content": stringSchema}, []string{"path", "proposed_content"}), writeOutput, false, "brain:write"),
+		tool("brain_append_section", "Append Markdown content to an existing heading section.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema}, []string{"path", "heading", "content"}), writeOutput, false, "brain:write"),
+		tool("brain_get_section", "Read one Markdown section by exact heading line.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema}, []string{"path", "heading"}), readNoteOutput, true, "brain:read"),
+		tool("brain_replace_section", "Replace one Markdown section by exact heading line.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema}, []string{"path", "heading", "content"}), writeOutput, false, "brain:write"),
+		tool("brain_upsert_section", "Replace an exact heading section, or insert it under an optional parent heading.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema, "parent_heading": stringSchema}, []string{"path", "heading", "content"}), writeOutput, false, "brain:write"),
+		tool("brain_delete_duplicate_section", "Delete duplicate exact heading sections while keeping first or last.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "keep": stringSchema}, []string{"path", "heading", "keep"}), writeOutput, false, "brain:write"),
+		tool("brain_replace_text", "Replace one exact text occurrence in a Markdown note.", objectSchema(map[string]any{"path": stringSchema, "old_text": stringSchema, "new_text": stringSchema}, []string{"path", "old_text", "new_text"}), writeOutput, false, "brain:write"),
+		tool("brain_git_status", "Return git status for the Brain repository.", objectSchema(map[string]any{}, []string{}), statusOutput, true, "brain:git"),
+		tool("brain_git_diff", "Return git diff for the Brain repository.", objectSchema(map[string]any{}, []string{}), gitDiffOutput, true, "brain:git"),
+		tool("brain_git_commit", "Commit current Brain repository changes and return the commit hash. Use only after explicit user approval.", objectSchema(map[string]any{"message": stringSchema}, []string{"message"}), commitOutput, false, "brain:git"),
+	}
+}
+
+func tool(name, description string, inputSchema, outputSchema map[string]any, readOnly bool, scopes ...string) map[string]any {
+	securitySchemes := []map[string]any{{"type": "oauth2", "scopes": scopes}}
+	annotations := map[string]any{"readOnlyHint": readOnly}
+	return map[string]any{
+		"name":            name,
+		"title":           name,
+		"description":     description,
+		"inputSchema":     inputSchema,
+		"outputSchema":    outputSchema,
+		"annotations":     annotations,
+		"securitySchemes": securitySchemes,
+		"_meta": map[string]any{
+			"securitySchemes":                securitySchemes,
+			"openai/toolInvocation/invoking": "Running " + name,
+			"openai/toolInvocation/invoked":  "Completed " + name,
+		},
 	}
 }
 

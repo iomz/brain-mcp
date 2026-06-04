@@ -56,6 +56,65 @@ func TestUnknownRequestMethodReturnsMethodNotFound(t *testing.T) {
 	}
 }
 
+func TestToolsListIncludesSecuritySchemes(t *testing.T) {
+	server := testServer(t)
+
+	resp, err := server.HandleBytes([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		Result struct {
+			Tools []map[string]any `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(resp, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Result.Tools) == 0 {
+		t.Fatalf("got no tools in %s", resp)
+	}
+	for _, tool := range got.Result.Tools {
+		name, _ := tool["name"].(string)
+		if _, ok := tool["securitySchemes"]; !ok {
+			t.Fatalf("tool %s missing securitySchemes", name)
+		}
+		meta, ok := tool["_meta"].(map[string]any)
+		if !ok {
+			t.Fatalf("tool %s missing _meta", name)
+		}
+		if _, ok := meta["securitySchemes"]; !ok {
+			t.Fatalf("tool %s missing _meta.securitySchemes", name)
+		}
+		if _, ok := tool["outputSchema"]; !ok {
+			t.Fatalf("tool %s missing outputSchema", name)
+		}
+	}
+}
+
+func TestToolCallReturnsStructuredContent(t *testing.T) {
+	server := testServer(t)
+	path := filepath.Join(server.vault.Root(), "Knowledge", "Self.md")
+	if err := os.WriteFile(path, []byte("# Self\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := server.HandleBytes([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_read_note","arguments":{"path":"Knowledge/Self.md"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(resp, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Result["structuredContent"]; !ok {
+		t.Fatalf("response missing structuredContent: %s", resp)
+	}
+}
+
 func TestSectionToolsUpdateExistingHeading(t *testing.T) {
 	server := testServer(t)
 	path := filepath.Join(server.vault.Root(), "Knowledge", "Self.md")

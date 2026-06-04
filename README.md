@@ -47,8 +47,30 @@ Set values:
 ```sh
 BRAIN_ROOT=/path/to/Brain
 BRAIN_ROOT_HOST=/path/to/Brain
+BRAIN_MCP_AUTH_MODE=mixed
 BRAIN_MCP_TOKEN=replace-with-long-random-token
 BRAIN_MCP_ADDR=127.0.0.1:8787
+BRAIN_MCP_OAUTH_RESOURCE=https://brain.sazanka.io/mcp
+BRAIN_MCP_OAUTH_ISSUER=https://auth.sazanka.io/application/o/brain-mcp/
+BRAIN_MCP_OAUTH_JWKS_URL=https://auth.sazanka.io/application/o/brain-mcp/jwks/
+BRAIN_MCP_OAUTH_CLIENT_ID=replace-with-authentik-client-id
+BRAIN_MCP_OAUTH_ACCEPTED_AUDIENCES=https://brain.sazanka.io/mcp,replace-with-authentik-client-id
+BRAIN_MCP_OAUTH_AUTHORIZATION_SERVERS=https://auth.sazanka.io/application/o/brain-mcp/
+BRAIN_MCP_OAUTH_DCR_ENABLED=false
+BRAIN_MCP_OAUTH_AUTHORIZATION_SERVER_ISSUER=https://brain.sazanka.io
+BRAIN_MCP_OAUTH_APPROVAL_TOKEN=replace-with-local-approval-token
+BRAIN_MCP_OAUTH_SUBJECT=brain-mcp-user
+BRAIN_MCP_OAUTH_EMAIL=you@example.com
+BRAIN_MCP_OAUTH_STATE_FILE=.brain-mcp-oauth-state.json
+BRAIN_MCP_OAUTH_AUTHENTIK_APPROVAL_ENABLED=false
+BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_ID=replace-with-authentik-client-id
+BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_SECRET=
+BRAIN_MCP_OAUTH_AUTHENTIK_AUTHORIZE_URL=https://auth.sazanka.io/application/o/brain-mcp/authorize/
+BRAIN_MCP_OAUTH_AUTHENTIK_TOKEN_URL=https://auth.sazanka.io/application/o/brain-mcp/token/
+BRAIN_MCP_OAUTH_AUTHENTIK_REDIRECT_URI=https://brain.sazanka.io/oauth/authentik/callback
+BRAIN_MCP_OAUTH_SCOPES=openid,email,profile,brain:read,brain:write,brain:git,brain:admin
+BRAIN_MCP_OAUTH_DEFAULT_SCOPES=brain:read
+BRAIN_MCP_ALLOWED_EMAILS=you@example.com
 CLOUDFLARED_TUNNEL_TOKEN=replace-with-cloudflare-token
 ```
 
@@ -61,8 +83,32 @@ CLOUDFLARED_TUNNEL_TOKEN=replace-with-cloudflare-token
 | `BRAIN_MCP_CONFIG_FILE` | `.env` | Config file path. `~` is expanded. |
 | `BRAIN_ROOT` | none | Local Brain vault root. Required. |
 | `BRAIN_ROOT_HOST` | none | Host vault path mounted into Docker as `/brain`. |
-| `BRAIN_MCP_TOKEN` | none | Bearer token required for HTTP mode. Required. |
+| `BRAIN_MCP_AUTH_MODE` | `bearer` locally, `mixed` in Compose | Auth mode: `bearer`, `oauth`, `mixed`, or `none`. |
+| `BRAIN_MCP_TOKEN` | none | Static bearer token. Required for `bearer` and `mixed`. |
 | `BRAIN_MCP_ADDR` | `127.0.0.1:8787` | Listen address. |
+| `BRAIN_MCP_OAUTH_RESOURCE` | `https://brain.sazanka.io/mcp` | OAuth protected resource identifier. |
+| `BRAIN_MCP_OAUTH_ISSUER` | none | OAuth/OIDC issuer URL. |
+| `BRAIN_MCP_OAUTH_JWKS_URL` | none | JWKS URL for access-token verification. |
+| `BRAIN_MCP_OAUTH_CLIENT_ID` | none | Authentik OAuth client ID; accepted as token `aud`. |
+| `BRAIN_MCP_OAUTH_ACCEPTED_AUDIENCES` | OAuth resource | Comma-separated accepted token `aud` or `resource` values. |
+| `BRAIN_MCP_OAUTH_AUTHORIZATION_SERVERS` | Authentik issuer | Comma-separated authorization server issuer URLs for protected-resource metadata. |
+| `BRAIN_MCP_OAUTH_DCR_ENABLED` | `false` | Enables experimental ChatGPT DCR and local authorization-code endpoints. Registration/code storage is memory-only. |
+| `BRAIN_MCP_OAUTH_AUTHORIZATION_SERVER_ISSUER` | OAuth resource origin | Issuer used by experimental DCR authorization-server metadata. |
+| `BRAIN_MCP_OAUTH_APPROVAL_TOKEN` | none | Local approval secret entered in the `/oauth/authorize` form. Required when DCR code flow is enabled. |
+| `BRAIN_MCP_OAUTH_SUBJECT` | `brain-mcp-user` | Subject claim for locally issued DCR access tokens. |
+| `BRAIN_MCP_OAUTH_EMAIL` | first allowed email | Email claim for locally issued DCR access tokens. |
+| `BRAIN_MCP_OAUTH_STATE_FILE` | `.brain-mcp-oauth-state.json` | Stores local OAuth signing key and DCR clients. Treat as secret. Compose defaults to `/state/oauth-state.json` on a named volume. |
+| `BRAIN_MCP_OAUTH_AUTHENTIK_APPROVAL_ENABLED` | `false` | Redirect `/oauth/authorize` approval to Authentik before issuing local resource tokens. |
+| `BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_ID` | OAuth client ID | Authentik client used for approval login. Defaults to `BRAIN_MCP_OAUTH_CLIENT_ID`. |
+| `BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_SECRET` | none | Optional Authentik client secret for code exchange. |
+| `BRAIN_MCP_OAUTH_AUTHENTIK_AUTHORIZE_URL` | issuer + `/authorize/` | Authentik authorize endpoint. |
+| `BRAIN_MCP_OAUTH_AUTHENTIK_TOKEN_URL` | issuer + `/token/` | Authentik token endpoint. |
+| `BRAIN_MCP_OAUTH_AUTHENTIK_REDIRECT_URI` | local issuer callback | Redirect URI to allow in Authentik: `https://brain.sazanka.io/oauth/authentik/callback`. |
+| `BRAIN_MCP_OAUTH_SCOPES` | `brain:read,brain:write,brain:git,brain:admin` | Scopes advertised to OAuth clients. Include `brain:*` scopes for tool authorization and OIDC scopes if Authentik needs them. |
+| `BRAIN_MCP_OAUTH_DEFAULT_SCOPES` | `brain:read` | Internal fallback scopes when OAuth token has no `brain:*` scopes. |
+| `BRAIN_MCP_ALLOWED_EMAILS` | none | Comma-separated OAuth email allowlist. At least one email, subject, or group allowlist is required for OAuth tokens. |
+| `BRAIN_MCP_ALLOWED_SUBJECTS` | none | Comma-separated OAuth subject allowlist. |
+| `BRAIN_MCP_ALLOWED_GROUPS` | none | Comma-separated OAuth group allowlist. |
 | `BRAIN_MCP_WRITABLE_PATHS` | `Knowledge/,System/,Active/,Archive/` | Comma-separated writable prefixes. |
 | `BRAIN_MCP_READONLY_PATHS` | `Journal/` | Comma-separated read-only prefixes. |
 | `BRAIN_MCP_REQUIRE_GIT` | `true` | Require `BRAIN_ROOT` to contain `.git`. |
@@ -116,16 +162,27 @@ brain-mcp
 
 ## HTTP API
 
-All HTTP endpoints require:
+`GET /healthz` and `GET /info` require static bearer auth unless `BRAIN_MCP_AUTH_MODE=none`.
 
 ```text
 Authorization: Bearer <BRAIN_MCP_TOKEN>
 ```
 
+`POST /mcp` allows unauthenticated `initialize` and `tools/list` so ChatGPT can discover tool metadata. Tool calls require either a valid static bearer token or a valid OAuth access token. Missing or invalid OAuth returns `401` with a `WWW-Authenticate` challenge pointing to `/.well-known/oauth-protected-resource`.
+
 Endpoints:
 
 | Method | Path | Description |
 | --- | --- | --- |
+| `GET` | `/.well-known/oauth-protected-resource` | Returns OAuth protected-resource metadata for ChatGPT. |
+| `GET` | `/.well-known/oauth-protected-resource/mcp` | Same metadata, path-specific variant. |
+| `GET` | `/.well-known/oauth-authorization-server` | Returns experimental authorization-server metadata when `BRAIN_MCP_OAUTH_DCR_ENABLED=true`. |
+| `GET` | `/.well-known/jwks.json` | Returns JWKS for locally issued DCR access tokens. |
+| `POST` | `/oauth/register` | Accepts experimental ChatGPT DCR client registration when `BRAIN_MCP_OAUTH_DCR_ENABLED=true`. |
+| `GET` | `/oauth/clients` | Lists DCR clients and token counts. Requires static bearer token. |
+| `GET`, `POST` | `/oauth/authorize` | Runs private approval-token authorization-code flow with PKCE S256 and a 30-day approval cookie. |
+| `GET` | `/oauth/authentik/callback` | Optional Authentik approval callback. |
+| `POST` | `/oauth/token` | Exchanges one-time authorization codes for locally signed JWT access tokens. |
 | `GET` | `/healthz` | Returns `{"ok":true}`. |
 | `GET` | `/info` | Returns vault basename, path policy, and git status summary. Absolute vault path is not exposed. |
 | `POST` | `/mcp` | Accepts one MCP JSON-RPC request body. |
@@ -142,6 +199,8 @@ curl -H "Authorization: Bearer $BRAIN_MCP_TOKEN" \
 ## MCP Tools
 
 All file paths are relative to `BRAIN_ROOT`.
+
+Tool descriptors include `inputSchema`, `outputSchema`, `structuredContent`, security schemes, and read-only annotations for ChatGPT integration.
 
 | Tool | Arguments | Effect |
 | --- | --- | --- |
