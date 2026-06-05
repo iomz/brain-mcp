@@ -17,7 +17,60 @@ var (
 	ErrPathForbidden = errors.New("path is not allowed by policy")
 	ErrReadOnlyPath  = errors.New("path is read-only")
 	ErrGitRequired   = errors.New("BRAIN_ROOT must be a git repository")
+	ErrFileExists    = errors.New("file already exists")
 )
+
+const (
+	ReasonMissingScope         = "missing_scope"
+	ReasonPathOutsideVault     = "path_outside_vault"
+	ReasonReadOnlyRoot         = "read_only_root"
+	ReasonCreateDisabled       = "create_disabled"
+	ReasonFileExists           = "file_exists"
+	ReasonFileMissing          = "file_missing"
+	ReasonParentMissing        = "parent_missing"
+	ReasonPathValidationFailed = "path_validation_failed"
+)
+
+type PathError struct {
+	Code           string
+	RequestedPath  string
+	NormalizedPath string
+	ResolvedPath   string
+	FileExists     bool
+	ParentExists   bool
+	Err            error
+}
+
+func (e PathError) Error() string {
+	message := e.Code
+	if e.Err != nil {
+		message += ": " + e.Err.Error()
+	}
+	fields := []string{}
+	if e.RequestedPath != "" {
+		fields = append(fields, "path="+e.RequestedPath)
+	}
+	if e.NormalizedPath != "" {
+		fields = append(fields, "normalized="+e.NormalizedPath)
+	}
+	if e.ResolvedPath != "" {
+		fields = append(fields, "resolved="+e.ResolvedPath)
+		fields = append(fields, fmt.Sprintf("exists=%t", e.FileExists))
+		fields = append(fields, fmt.Sprintf("parent_exists=%t", e.ParentExists))
+	}
+	if len(fields) > 0 {
+		message += " (" + strings.Join(fields, " ") + ")"
+	}
+	return message
+}
+
+func (e PathError) Unwrap() error {
+	return e.Err
+}
+
+func (e PathError) Is(target error) bool {
+	return errors.Is(e.Err, target)
+}
 
 type Vault struct {
 	root          string
@@ -41,11 +94,11 @@ type Policy struct {
 }
 
 func DefaultWritablePaths() []string {
-	return []string{"Knowledge/", "System/", "Active/", "Archive/"}
+	return []string{"Knowledge/", "System/", "Active/", "Archive/", "Journal/"}
 }
 
 func DefaultReadonlyPaths() []string {
-	return []string{"Journal/"}
+	return nil
 }
 
 func NewVaultWithPolicy(root string, policy Policy) (*Vault, error) {
@@ -107,30 +160,62 @@ func (v *Vault) ResolveWritePath(rel string) (string, string, error) {
 func (v *Vault) resolve(rel string, write bool) (string, string, error) {
 	clean, err := cleanRelative(rel)
 	if err != nil {
-		return "", "", err
+		return "", "", v.pathError(rel, "", "", reasonForPathError(err), err)
 	}
 	if write && strings.ToLower(filepath.Ext(clean)) != ".md" {
-		return "", "", ErrNotMarkdown
+		return "", "", v.pathError(rel, clean, filepath.Join(v.root, clean), ReasonPathValidationFailed, ErrNotMarkdown)
 	}
 	if write {
 		if !matchesPrefix(clean, v.writablePaths) {
 			if matchesPrefix(clean, v.readonlyPaths) {
-				return "", "", ErrReadOnlyPath
+				return "", "", v.pathError(rel, clean, filepath.Join(v.root, clean), ReasonReadOnlyRoot, ErrReadOnlyPath)
 			}
-			return "", "", ErrPathForbidden
+			return "", "", v.pathError(rel, clean, filepath.Join(v.root, clean), ReasonPathOutsideVault, ErrPathForbidden)
 		}
 	} else if !matchesPrefix(clean, append(v.writablePaths, v.readonlyPaths...)) {
-		return "", "", ErrPathForbidden
+		return "", "", v.pathError(rel, clean, filepath.Join(v.root, clean), ReasonPathOutsideVault, ErrPathForbidden)
 	}
 
 	abs := filepath.Join(v.root, clean)
 	if err := ensureInside(v.root, abs); err != nil {
-		return "", "", err
+		return "", "", v.pathError(rel, clean, abs, reasonForPathError(err), err)
 	}
 	if err := v.ensureNoSymlinkEscape(abs); err != nil {
-		return "", "", err
+		return "", "", v.pathError(rel, clean, abs, reasonForPathError(err), err)
 	}
 	return clean, abs, nil
+}
+
+func (v *Vault) pathError(requested, normalized, resolved, code string, err error) PathError {
+	pe := PathError{
+		Code:           code,
+		RequestedPath:  requested,
+		NormalizedPath: normalized,
+		ResolvedPath:   resolved,
+		Err:            err,
+	}
+	if resolved != "" {
+		if _, statErr := os.Stat(resolved); statErr == nil {
+			pe.FileExists = true
+		}
+		if _, statErr := os.Stat(filepath.Dir(resolved)); statErr == nil {
+			pe.ParentExists = true
+		}
+	}
+	return pe
+}
+
+func reasonForPathError(err error) string {
+	switch {
+	case errors.Is(err, ErrOutsideRoot):
+		return ReasonPathOutsideVault
+	case errors.Is(err, ErrReadOnlyPath):
+		return ReasonReadOnlyRoot
+	case errors.Is(err, ErrPathForbidden):
+		return ReasonPathOutsideVault
+	default:
+		return ReasonPathValidationFailed
+	}
 }
 
 func normalizePrefixes(prefixes []string) []string {

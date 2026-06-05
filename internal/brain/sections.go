@@ -75,10 +75,15 @@ func (v *Vault) ReplaceSection(path, heading, content string) (string, string, e
 }
 
 func (v *Vault) UpsertSection(path, heading, content, parentHeading string) (string, string, error) {
-	clean, _, oldContent, err := v.readWritableMarkdown(path)
+	clean, abs, err := v.ResolveWritePath(path)
 	if err != nil {
 		return "", "", err
 	}
+	oldContentBytes, err := os.ReadFile(abs)
+	if err != nil && !os.IsNotExist(err) {
+		return "", "", v.filePathError(path, clean, abs, err)
+	}
+	oldContent := string(oldContentBytes)
 	nextContent, err := upsertSectionExact(oldContent, heading, content, parentHeading)
 	if err != nil {
 		return "", "", err
@@ -133,7 +138,7 @@ func (v *Vault) readMarkdown(path string) (string, string, string, error) {
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", v.filePathError(path, clean, abs, err)
 	}
 	return clean, abs, string(data), nil
 }
@@ -145,7 +150,7 @@ func (v *Vault) readWritableMarkdown(path string) (string, string, string, error
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", v.filePathError(path, clean, abs, err)
 	}
 	return clean, abs, string(data), nil
 }

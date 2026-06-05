@@ -21,7 +21,6 @@ func TestPathValidationRejectsUnsafePaths(t *testing.T) {
 		{"hidden", ".secret/Self.md", ErrHiddenPath},
 		{".git", ".git/config.md", ErrHiddenPath},
 		{"non markdown write", "Knowledge/Self.txt", ErrNotMarkdown},
-		{"readonly write", "Journal/Today.md", ErrReadOnlyPath},
 		{"forbidden write", "Inbox/Note.md", ErrPathForbidden},
 	}
 
@@ -32,6 +31,23 @@ func TestPathValidationRejectsUnsafePaths(t *testing.T) {
 				t.Fatalf("got %v, want %v", err, tt.err)
 			}
 		})
+	}
+}
+
+func TestPathValidationRejectsExplicitReadonlyPaths(t *testing.T) {
+	v := testVaultWithPolicy(t, Policy{
+		WritablePaths: []string{"Knowledge/"},
+		ReadonlyPaths: []string{"Journal/"},
+		RequireGit:    false,
+	})
+
+	_, _, err := v.ResolveWritePath("Journal/Today.md")
+	if !errors.Is(err, ErrReadOnlyPath) {
+		t.Fatalf("got %v, want %v", err, ErrReadOnlyPath)
+	}
+	var pathErr PathError
+	if !errors.As(err, &pathErr) || pathErr.Code != ReasonReadOnlyRoot {
+		t.Fatalf("got %v, want reason %s", err, ReasonReadOnlyRoot)
 	}
 }
 
@@ -71,6 +87,28 @@ func testVault(t *testing.T) *Vault {
 		ReadonlyPaths: DefaultReadonlyPaths(),
 		RequireGit:    false,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func testVaultWithPolicy(t *testing.T, policy Policy) *Vault {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "Knowledge"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Knowledge", "Self.md"), []byte("# Self\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "Journal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Journal", "Today.md"), []byte("# Today\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := NewVaultWithPolicy(root, policy)
 	if err != nil {
 		t.Fatal(err)
 	}

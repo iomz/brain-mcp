@@ -65,8 +65,10 @@ BRAIN_MCP_OAUTH_STATE_FILE=.brain-mcp-oauth-state.json
 BRAIN_MCP_OAUTH_AUTHENTIK_APPROVAL_ENABLED=false
 BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_ID=replace-with-authentik-client-id
 BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_SECRET=
-BRAIN_MCP_OAUTH_AUTHENTIK_AUTHORIZE_URL=https://auth.sazanka.io/application/o/brain-mcp/authorize/
-BRAIN_MCP_OAUTH_AUTHENTIK_TOKEN_URL=https://auth.sazanka.io/application/o/brain-mcp/token/
+# Authentik issuer/discovery URLs include the provider slug, but authorize/token
+# endpoints commonly do not. Verify with the provider's OpenID discovery document.
+BRAIN_MCP_OAUTH_AUTHENTIK_AUTHORIZE_URL=https://auth.sazanka.io/application/o/authorize/
+BRAIN_MCP_OAUTH_AUTHENTIK_TOKEN_URL=https://auth.sazanka.io/application/o/token/
 BRAIN_MCP_OAUTH_AUTHENTIK_REDIRECT_URI=https://brain.sazanka.io/oauth/authentik/callback
 BRAIN_MCP_OAUTH_SCOPES=openid,email,profile,brain:read,brain:write,brain:git,brain:admin
 BRAIN_MCP_OAUTH_DEFAULT_SCOPES=brain:read
@@ -101,18 +103,80 @@ CLOUDFLARED_TUNNEL_TOKEN=replace-with-cloudflare-token
 | `BRAIN_MCP_OAUTH_AUTHENTIK_APPROVAL_ENABLED` | `false` | Redirect `/oauth/authorize` approval to Authentik before issuing local resource tokens. |
 | `BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_ID` | OAuth client ID | Authentik client used for approval login. Defaults to `BRAIN_MCP_OAUTH_CLIENT_ID`. |
 | `BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_SECRET` | none | Optional Authentik client secret for code exchange. |
-| `BRAIN_MCP_OAUTH_AUTHENTIK_AUTHORIZE_URL` | issuer + `/authorize/` | Authentik authorize endpoint. |
-| `BRAIN_MCP_OAUTH_AUTHENTIK_TOKEN_URL` | issuer + `/token/` | Authentik token endpoint. |
+| `BRAIN_MCP_OAUTH_AUTHENTIK_AUTHORIZE_URL` | Authentik discovery `authorization_endpoint` | Authentik authorize endpoint. Usually `https://auth.example.com/application/o/authorize/`, without the provider slug. Verify via OpenID discovery. |
+| `BRAIN_MCP_OAUTH_AUTHENTIK_TOKEN_URL` | Authentik discovery `token_endpoint` | Authentik token endpoint. Usually `https://auth.example.com/application/o/token/`, without the provider slug. Verify via OpenID discovery. |
 | `BRAIN_MCP_OAUTH_AUTHENTIK_REDIRECT_URI` | local issuer callback | Redirect URI to allow in Authentik: `https://brain.sazanka.io/oauth/authentik/callback`. |
 | `BRAIN_MCP_OAUTH_SCOPES` | `brain:read,brain:write,brain:git,brain:admin` | Scopes advertised to OAuth clients. Include `brain:*` scopes for tool authorization and OIDC scopes if Authentik needs them. |
 | `BRAIN_MCP_OAUTH_DEFAULT_SCOPES` | `brain:read` | Internal fallback scopes when OAuth token has no `brain:*` scopes. |
 | `BRAIN_MCP_ALLOWED_EMAILS` | none | Comma-separated OAuth email allowlist. At least one email, subject, or group allowlist is required for OAuth tokens. |
 | `BRAIN_MCP_ALLOWED_SUBJECTS` | none | Comma-separated OAuth subject allowlist. |
 | `BRAIN_MCP_ALLOWED_GROUPS` | none | Comma-separated OAuth group allowlist. |
-| `BRAIN_MCP_WRITABLE_PATHS` | `Knowledge/,System/,Active/,Archive/` | Comma-separated writable prefixes. |
-| `BRAIN_MCP_READONLY_PATHS` | `Journal/` | Comma-separated read-only prefixes. |
+| `BRAIN_MCP_WRITABLE_PATHS` | `Knowledge/,System/,Active/,Archive/,Journal/` | Comma-separated writable prefixes. |
+| `BRAIN_MCP_READONLY_PATHS` | none | Comma-separated read-only prefixes. Put `Journal/` here only when journal editing should be blocked. |
 | `BRAIN_MCP_REQUIRE_GIT` | `true` | Require `BRAIN_ROOT` to contain `.git`. |
 | `CLOUDFLARED_TUNNEL_TOKEN` | none | Cloudflare tunnel token used by Compose. |
+
+### Authentik Endpoint Discovery
+
+Authentik has two URL shapes that are easy to confuse.
+
+Provider-specific issuer, discovery, and JWKS URLs usually include the provider slug:
+
+```text
+https://auth.example.com/application/o/brain-mcp/
+https://auth.example.com/application/o/brain-mcp/.well-known/openid-configuration
+https://auth.example.com/application/o/brain-mcp/jwks/
+```
+
+The authorization and token endpoints commonly do **not** include the provider slug:
+
+```text
+https://auth.example.com/application/o/authorize/
+https://auth.example.com/application/o/token/
+```
+
+Do not guess these URLs by string concatenation. Confirm them from Authentik's OpenID discovery document:
+
+```sh
+curl -s   https://auth.example.com/application/o/brain-mcp/.well-known/openid-configuration   | jq '.issuer, .authorization_endpoint, .token_endpoint, .jwks_uri'
+```
+
+Use the returned values directly.
+
+A common wrong configuration is:
+
+```text
+https://auth.example.com/application/o/brain-mcp/authorize/
+https://auth.example.com/application/o/brain-mcp/token/
+```
+
+If the ChatGPT connector redirects to Authentik and the browser shows only `Not Found`, check the resolved `authorization_endpoint` first.
+
+### OAuth Configuration Model
+
+The OAuth settings cover three related but distinct responsibilities:
+
+1. **External token validation**
+   - `BRAIN_MCP_OAUTH_ISSUER`
+   - `BRAIN_MCP_OAUTH_JWKS_URL`
+   - `BRAIN_MCP_OAUTH_ACCEPTED_AUDIENCES`
+   - allowlist settings such as `BRAIN_MCP_ALLOWED_EMAILS`
+
+2. **Brain MCP authorization-server facade for ChatGPT DCR**
+   - `BRAIN_MCP_OAUTH_DCR_ENABLED`
+   - `BRAIN_MCP_OAUTH_AUTHORIZATION_SERVER_ISSUER`
+   - `BRAIN_MCP_OAUTH_STATE_FILE`
+   - `/oauth/register`, `/oauth/authorize`, `/oauth/token`, and local JWKS endpoints
+
+3. **Optional Authentik-backed browser approval**
+   - `BRAIN_MCP_OAUTH_AUTHENTIK_APPROVAL_ENABLED`
+   - `BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_ID`
+   - `BRAIN_MCP_OAUTH_AUTHENTIK_CLIENT_SECRET`
+   - `BRAIN_MCP_OAUTH_AUTHENTIK_AUTHORIZE_URL`
+   - `BRAIN_MCP_OAUTH_AUTHENTIK_TOKEN_URL`
+   - `BRAIN_MCP_OAUTH_AUTHENTIK_REDIRECT_URI`
+
+These settings should not be collapsed into one URL pattern. In particular, an Authentik provider issuer can contain `/brain-mcp/` while its authorize and token endpoints do not.
 
 ## Run Locally
 
@@ -162,6 +226,10 @@ brain-mcp
 
 ## HTTP API
 
+`brain-mcp` exposes both MCP resource endpoints and experimental OAuth/DCR endpoints.
+
+The public MCP resource is `/mcp`. OAuth discovery starts from the protected-resource metadata endpoint, while the optional DCR authorization-server facade uses `/oauth/*` endpoints when enabled.
+
 `GET /healthz` and `GET /info` require static bearer auth unless `BRAIN_MCP_AUTH_MODE=none`.
 
 ```text
@@ -206,8 +274,12 @@ Tool descriptors include `inputSchema`, `outputSchema`, `structuredContent`, sec
 | --- | --- | --- |
 | `brain_read_note` | `path` | Read one Markdown note. |
 | `brain_list_notes` | `prefix` | List `.md` notes under a directory prefix. |
+| `brain_get_journal_config` | none | Return journal root and daily/monthly/yearly note patterns. |
+| `brain_get_today_journal` | none | Resolve today's daily journal path and whether it exists. |
+| `brain_find_recent_journals` | optional `limit` | List recent journal notes newest first. |
 | `brain_show_diff` | `path`, `new_content` | Return unified diff without writing. |
 | `brain_apply_patch` | `path`, `proposed_content` | Write complete proposed note content and return diff. |
+| `brain_create_note` | `path`, `content` | Create a new `.md` note, including parent directories, without overwriting existing files. |
 | `brain_append_section` | `path`, `heading`, `content` | Append content inside an existing exact heading section. |
 | `brain_get_section` | `path`, `heading` | Read one exact heading section. |
 | `brain_replace_section` | `path`, `heading`, `content` | Replace one exact heading section. |
@@ -218,7 +290,7 @@ Tool descriptors include `inputSchema`, `outputSchema`, `structuredContent`, sec
 | `brain_git_diff` | none | Return `git diff --` for the vault. |
 | `brain_git_commit` | `message` | Stage all vault changes and commit them. |
 
-`brain_apply_patch` also accepts `content` for compatibility. `brain_write_note` is accepted as an alias for `brain_apply_patch`.
+`brain_apply_patch` also accepts `content` for compatibility. `brain_write_note` is accepted as an alias for `brain_apply_patch`. `brain_create_note` writes UTF-8 Markdown content, ensures a trailing newline, and returns an error if the target file already exists.
 
 ### Section Editing Examples
 

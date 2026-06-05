@@ -107,8 +107,8 @@ func ensureConfigFile(path string) error {
 # BRAIN_MCP_ALLOWED_EMAILS=
 # BRAIN_MCP_ALLOWED_GROUPS=
 # BRAIN_MCP_AUTH_DEBUG=false
-# BRAIN_MCP_WRITABLE_PATHS=Knowledge/,System/,Active/,Archive/
-# BRAIN_MCP_READONLY_PATHS=Journal/
+# BRAIN_MCP_WRITABLE_PATHS=Knowledge/,System/,Active/,Archive/,Journal/
+# BRAIN_MCP_READONLY_PATHS=
 # BRAIN_MCP_REQUIRE_GIT=true
 # CLOUDFLARED_TUNNEL_TOKEN=replace-with-cloudflare-token
 `)

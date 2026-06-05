@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"errors"
 	"io/fs"
 	"log"
 	"os"
@@ -18,7 +19,7 @@ func (v *Vault) ReadNote(path string) (string, string, error) {
 	}
 	content, err := os.ReadFile(abs)
 	if err != nil {
-		return "", "", err
+		return "", "", v.filePathError(path, clean, abs, err)
 	}
 	return clean, string(content), nil
 }
@@ -26,6 +27,42 @@ func (v *Vault) ReadNote(path string) (string, string, error) {
 func (v *Vault) WriteNote(path, content string) (string, error) {
 	clean, _, err := v.ApplyPatch(path, content)
 	return clean, err
+}
+
+func (v *Vault) CreateNote(path, content string) (string, int, error) {
+	clean, abs, err := v.ResolveWritePath(path)
+	if err != nil {
+		return "", 0, err
+	}
+	if _, err := os.Stat(abs); err == nil {
+		return "", 0, v.pathError(path, clean, abs, ReasonFileExists, ErrFileExists)
+	} else if !os.IsNotExist(err) {
+		return "", 0, v.filePathError(path, clean, abs, err)
+	}
+	parent := filepath.Dir(abs)
+	if err := v.ensureNoSymlinkEscape(parent); err != nil {
+		return "", 0, err
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", 0, err
+	}
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	data := []byte(content)
+	file, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return "", 0, v.pathError(path, clean, abs, ReasonFileExists, ErrFileExists)
+		}
+		return "", 0, err
+	}
+	defer file.Close()
+	if _, err := file.Write(data); err != nil {
+		return "", 0, err
+	}
+	log.Printf("brain_create path=%s bytes=%d", clean, len(data))
+	return clean, len(data), nil
 }
 
 func (v *Vault) ShowDiff(path, proposedContent string) (string, string, error) {
@@ -73,7 +110,7 @@ func (v *Vault) ListNotes(dir string) ([]string, error) {
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
-		return nil, err
+		return nil, v.filePathError(dir, clean, abs, err)
 	}
 	if !info.IsDir() {
 		return nil, fs.ErrInvalid
@@ -114,6 +151,17 @@ func (v *Vault) ListNotes(dir string) ([]string, error) {
 		return notes, nil
 	}
 	return notes, nil
+}
+
+func (v *Vault) filePathError(requested, normalized, resolved string, err error) error {
+	code := ReasonPathValidationFailed
+	if errors.Is(err, os.ErrNotExist) {
+		code = ReasonFileMissing
+		if _, parentErr := os.Stat(filepath.Dir(resolved)); errors.Is(parentErr, os.ErrNotExist) {
+			code = ReasonParentMissing
+		}
+	}
+	return v.pathError(requested, normalized, resolved, code, err)
 }
 
 func (v *Vault) diffForResolvedPath(clean, abs, proposedContent string) (string, error) {

@@ -139,6 +139,108 @@ func TestSectionToolsUpdateExistingHeading(t *testing.T) {
 	}
 }
 
+func TestCreateNoteToolCreatesNewMarkdownFile(t *testing.T) {
+	server := testServer(t)
+
+	resp, err := server.HandleBytes([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_create_note","arguments":{"path":"Knowledge/Preferences.md","content":"# Preferences"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(resp)
+	if !strings.Contains(text, `"created":true`) || !strings.Contains(text, `"bytes_written"`) {
+		t.Fatalf("response missing create fields: %s", resp)
+	}
+	_, content, err := server.vault.ReadNote("Knowledge/Preferences.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "# Preferences\n" {
+		t.Fatalf("got content %q", content)
+	}
+}
+
+func TestOAuthReadScopeCanListJournalAndResolveToday(t *testing.T) {
+	server := testServer(t)
+	if err := os.WriteFile(filepath.Join(server.vault.Root(), "Journal", "2026-06-05.md"), []byte("# Today\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	auth := AuthContext{
+		Kind:    AuthKindOAuth,
+		Subject: "brain-mcp-user",
+		Email:   "user@example.test",
+		Scopes:  []string{"brain:read"},
+	}
+	resp, err := server.HandleBytesWithAuth([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_list_notes","arguments":{"prefix":"Journal/"}}}`), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(resp), "Journal/2026-06-05.md") {
+		t.Fatalf("response missing journal note: %s", resp)
+	}
+
+	resp, err = server.HandleBytesWithAuth([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"brain_get_today_journal","arguments":{}}}`), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(resp), "Journal/") || !strings.Contains(string(resp), ".md") {
+		t.Fatalf("response missing today journal path: %s", resp)
+	}
+}
+
+func TestOAuthWriteScopeUpdatesExistingJournal(t *testing.T) {
+	server := testServer(t)
+	if err := os.WriteFile(filepath.Join(server.vault.Root(), "Journal", "2026-06-05.md"), []byte("# Today\n\n## Notes\n\nOld.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	auth := AuthContext{
+		Kind:    AuthKindOAuth,
+		Subject: "brain-mcp-user",
+		Email:   "user@example.test",
+		Scopes:  []string{"brain:write"},
+	}
+	resp, err := server.HandleBytesWithAuth([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_upsert_section","arguments":{"path":"Journal/2026-06-05.md","heading":"## Notes","content":"New."}}}`), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(resp), `"success":true`) {
+		t.Fatalf("response missing success: %s", resp)
+	}
+	_, content, err := server.vault.ReadNote("Journal/2026-06-05.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "# Today\n\n## Notes\n\nNew.\n\n" {
+		t.Fatalf("got content:\n%s", content)
+	}
+}
+
+func TestOAuthWriteScopeCreatesJournalWithUpsert(t *testing.T) {
+	server := testServer(t)
+	auth := AuthContext{Kind: AuthKindOAuth, Scopes: []string{"brain:write"}}
+
+	resp, err := server.HandleBytesWithAuth([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_upsert_section","arguments":{"path":"Journal/2026-06-05.md","heading":"## Notes","content":"New."}}}`), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(resp), `"success":true`) {
+		t.Fatalf("response missing success: %s", resp)
+	}
+}
+
+func TestMissingScopeUsesExplicitReason(t *testing.T) {
+	server := testServer(t)
+
+	resp, err := server.HandleBytesWithAuth([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_list_notes","arguments":{"prefix":"Journal/"}}}`), AuthContext{Kind: AuthKindOAuth, Scopes: []string{"brain:write"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(resp), brain.ReasonMissingScope) {
+		t.Fatalf("response missing missing_scope reason: %s", resp)
+	}
+}
+
 func TestGitCommitToolReturnsHash(t *testing.T) {
 	server := testGitServer(t)
 	path := filepath.Join(server.vault.Root(), "Knowledge", "Self.md")
@@ -168,6 +270,9 @@ func testServer(t *testing.T) *Server {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "Knowledge"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "Journal"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	vault, err := brain.NewVaultWithPolicy(root, brain.Policy{

@@ -130,6 +130,50 @@ func TestUpsertSectionFailsOnDuplicateMatchingHeadings(t *testing.T) {
 	}
 }
 
+func TestUpsertSectionCreatesNonExistentWritableNote(t *testing.T) {
+	v := testVault(t)
+
+	path, patch, err := v.UpsertSection("Journal/2026-06-05.md", "## Notes", "New note.", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "Journal/2026-06-05.md" {
+		t.Fatalf("got path %q", path)
+	}
+	got := readNoteFile(t, v, "Journal/2026-06-05.md")
+	want := "## Notes\n\nNew note.\n\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if !strings.Contains(patch, "+## Notes") || !strings.Contains(patch, "+New note.") {
+		t.Fatalf("diff missing created section:\n%s", patch)
+	}
+}
+
+func TestJournalSectionWriteToolsUpdateExistingWritableNote(t *testing.T) {
+	v := testVault(t)
+	writeNoteFile(t, v, "Journal/2026-06-05.md", "# Today\n\n## Notes\n\nOld.\n\n## Tasks\n\n- Old\n")
+
+	if _, _, err := v.UpsertSection("Journal/2026-06-05.md", "## Notes", "New.", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := v.AppendSection("Journal/2026-06-05.md", "## Tasks", "- New"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := v.ReplaceSection("Journal/2026-06-05.md", "## Notes", "Newest."); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := v.ApplyPatch("Journal/2026-06-05.md", "# Today\n\n## Notes\n\nPatched.\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := readNoteFile(t, v, "Journal/2026-06-05.md")
+	want := "# Today\n\n## Notes\n\nPatched.\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestDeleteDuplicateSectionKeepsFirst(t *testing.T) {
 	v := testVault(t)
 	writeNoteFile(t, v, "Knowledge/Self.md", "# Self\n\n## Notes\n\nOne.\n\n## Other\n\nKeep.\n\n## Notes\n\nTwo.\n")
@@ -219,7 +263,11 @@ func TestReplaceTextFailsOnMultipleOccurrences(t *testing.T) {
 }
 
 func TestSectionWriteToolsRejectReadonlyPaths(t *testing.T) {
-	v := testVault(t)
+	v := testVaultWithPolicy(t, Policy{
+		WritablePaths: []string{"Knowledge/"},
+		ReadonlyPaths: []string{"Journal/"},
+		RequireGit:    false,
+	})
 
 	writeChecks := []struct {
 		name string
@@ -245,8 +293,13 @@ func TestSectionWriteToolsRejectReadonlyPaths(t *testing.T) {
 
 	for _, tt := range writeChecks {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.fn(); !errors.Is(err, ErrReadOnlyPath) {
+			err := tt.fn()
+			if !errors.Is(err, ErrReadOnlyPath) {
 				t.Fatalf("got %v, want %v", err, ErrReadOnlyPath)
+			}
+			var pathErr PathError
+			if !errors.As(err, &pathErr) || pathErr.Code != ReasonReadOnlyRoot {
+				t.Fatalf("got %v, want reason %s", err, ReasonReadOnlyRoot)
 			}
 		})
 	}
