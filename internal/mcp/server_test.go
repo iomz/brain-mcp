@@ -1,13 +1,16 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iomz/brain-mcp/internal/brain"
 )
@@ -156,6 +159,88 @@ func TestCreateNoteToolCreatesNewMarkdownFile(t *testing.T) {
 	}
 	if content != "# Preferences\n" {
 		t.Fatalf("got content %q", content)
+	}
+}
+
+func TestSearchNotesToolReturnsRankedResults(t *testing.T) {
+	server := testServer(t)
+	if err := os.MkdirAll(filepath.Join(server.vault.Root(), "System"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(server.vault.Root(), "System", "Ingest.md"), []byte("# Ingest\n\n## Responsibility Boundary\n\nPhysical Context rules.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(server.vault.Root(), "Knowledge", "Ingest.md"), []byte("# Ingest\n\nOutside prefix.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := server.HandleBytes([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_search_notes","arguments":{"query":"ingest responsibility boundary Physical Context","prefix":"System/"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(resp)
+	if !strings.Contains(text, `"path":"System/Ingest.md"`) {
+		t.Fatalf("response missing System/Ingest.md: %s", resp)
+	}
+	if strings.Contains(text, `"path":"Knowledge/Ingest.md"`) {
+		t.Fatalf("response included note outside prefix: %s", resp)
+	}
+	if !strings.Contains(text, `"snippets"`) || !strings.Contains(text, "Responsibility Boundary") {
+		t.Fatalf("response missing search context: %s", resp)
+	}
+}
+
+func TestToolsListIncludesSearchNotes(t *testing.T) {
+	server := testServer(t)
+
+	resp, err := server.HandleBytes([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(resp), `"name":"brain_search_notes"`) {
+		t.Fatalf("tools/list missing brain_search_notes: %s", resp)
+	}
+}
+
+func TestAppendToTodayJournalToolWritesTodayJournal(t *testing.T) {
+	server := testServer(t)
+
+	resp, err := server.HandleBytes([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_append_to_today_journal","arguments":{"heading":"Notes","content":"New journal entry."}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(resp)
+	if !strings.Contains(text, `"success":true`) || !strings.Contains(text, `"heading":"## Notes"`) || !strings.Contains(text, `"appended_preview":"New journal entry."`) {
+		t.Fatalf("response missing append fields: %s", resp)
+	}
+	today := time.Now().Format("2006-01-02")
+	_, content, err := server.vault.ReadNote("Journal/" + today + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "## Notes\n\nNew journal entry.\n\n" {
+		t.Fatalf("got content:\n%s", content)
+	}
+}
+
+func TestToolsListLogsToolNames(t *testing.T) {
+	server := testServer(t)
+	var buf bytes.Buffer
+	oldWriter := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(oldWriter)
+	})
+
+	if _, err := server.HandleBytes([]byte(`{"jsonrpc":"2.0","id":"abc","method":"tools/list"}`)); err != nil {
+		t.Fatal(err)
+	}
+	logs := buf.String()
+	if !strings.Contains(logs, "mcp_tools_list") || !strings.Contains(logs, `request_id="abc"`) {
+		t.Fatalf("tools/list log missing request id: %s", logs)
+	}
+	if !strings.Contains(logs, "brain_get_today_journal") || !strings.Contains(logs, "brain_append_to_today_journal") {
+		t.Fatalf("tools/list log missing tool names: %s", logs)
 	}
 }
 

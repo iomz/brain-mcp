@@ -3,6 +3,7 @@ package brain
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,5 +51,87 @@ func TestRecentJournalsNewestFirst(t *testing.T) {
 		if journals[i].Path != want[i] || !journals[i].Exists {
 			t.Fatalf("got %+v, want %s exists", journals, want[i])
 		}
+	}
+}
+
+func TestAppendToTodayJournalAppendsToFileEndWithoutHeading(t *testing.T) {
+	v := testVault(t)
+	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+	writeNoteFile(t, v, "Journal/2026-06-05.md", "# Today\n\nExisting.\n")
+
+	result, err := v.AppendToTodayJournal(now, "", "New entry.")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Path != "Journal/2026-06-05.md" || result.Heading != "" {
+		t.Fatalf("got result %+v", result)
+	}
+	got := readNoteFile(t, v, "Journal/2026-06-05.md")
+	want := "# Today\n\nExisting.\n\nNew entry.\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if !strings.Contains(result.Diff, "+New entry.") || result.AppendedPreview != "New entry." {
+		t.Fatalf("result missing diff or preview: %+v", result)
+	}
+}
+
+func TestAppendToTodayJournalAppendsToExistingHeading(t *testing.T) {
+	v := testVault(t)
+	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+	writeNoteFile(t, v, "Journal/2026-06-05.md", "# Today\n\n## Notes\n\nOld.\n\n## Tasks\n\n- Keep\n")
+
+	result, err := v.AppendToTodayJournal(now, "Notes", "New.")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Heading != "## Notes" {
+		t.Fatalf("got heading %q", result.Heading)
+	}
+	got := readNoteFile(t, v, "Journal/2026-06-05.md")
+	want := "# Today\n\n## Notes\n\nOld.\n\nNew.\n\n## Tasks\n\n- Keep\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestAppendToTodayJournalCreatesMissingHeading(t *testing.T) {
+	v := testVault(t)
+	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+	writeNoteFile(t, v, "Journal/2026-06-05.md", "# Today\n\nExisting.\n")
+
+	result, err := v.AppendToTodayJournal(now, "Notes", "New.")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Heading != "## Notes" {
+		t.Fatalf("got heading %q", result.Heading)
+	}
+	got := readNoteFile(t, v, "Journal/2026-06-05.md")
+	want := "# Today\n\nExisting.\n\n## Notes\n\nNew.\n\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestAppendToTodayJournalCreatesMissingJournal(t *testing.T) {
+	v := testVault(t)
+	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+
+	result, err := v.AppendToTodayJournal(now, "## Notes", "First.")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Path != "Journal/2026-06-05.md" || result.Heading != "## Notes" {
+		t.Fatalf("got result %+v", result)
+	}
+	got := readNoteFile(t, v, "Journal/2026-06-05.md")
+	want := "## Notes\n\nFirst.\n\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
 }

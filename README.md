@@ -274,6 +274,7 @@ Tool descriptors include `inputSchema`, `outputSchema`, `structuredContent`, sec
 | --- | --- | --- |
 | `brain_read_note` | `path` | Read one Markdown note. |
 | `brain_list_notes` | `prefix` | List `.md` notes under a directory prefix. |
+| `brain_search_notes` | `query`, optional `prefix`, `limit`, `include_snippets` | Search Markdown notes by path, title, headings, and body without returning full contents. |
 | `brain_get_journal_config` | none | Return journal root and daily/monthly/yearly note patterns. |
 | `brain_get_today_journal` | none | Resolve today's daily journal path and whether it exists. |
 | `brain_find_recent_journals` | optional `limit` | List recent journal notes newest first. |

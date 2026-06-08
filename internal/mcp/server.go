@@ -146,7 +146,9 @@ func (s *Server) handle(req request, auth AuthContext) *response {
 			"capabilities": map[string]any{"tools": map[string]any{}},
 		}
 	case "tools/list":
-		resp.Result = map[string]any{"tools": tools()}
+		availableTools := tools()
+		log.Printf("mcp_tools_list request_id=%s tool_names=%q", requestID(req), strings.Join(toolNames(availableTools), ","))
+		resp.Result = map[string]any{"tools": availableTools}
 	case "tools/call":
 		result, err := s.callTool(req.Params, auth)
 		if err != nil {
@@ -177,6 +179,24 @@ func requestToolName(req request) string {
 		return ""
 	}
 	return params.Name
+}
+
+func requestID(req request) string {
+	if len(req.ID) == 0 {
+		return "-"
+	}
+	return string(req.ID)
+}
+
+func toolNames(tools []map[string]any) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		name, _ := tool["name"].(string)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func logValue(value string) string {
@@ -227,6 +247,30 @@ func (s *Server) callTool(raw json.RawMessage, auth AuthContext) (any, error) {
 			return nil, err
 		}
 		return toolResult(map[string]any{"notes": notes}), nil
+	case "brain_search_notes":
+		var args struct {
+			Query           string `json:"query"`
+			Prefix          string `json:"prefix"`
+			Limit           int    `json:"limit"`
+			IncludeSnippets *bool  `json:"include_snippets"`
+		}
+		if err := json.Unmarshal(params.Arguments, &args); err != nil {
+			return nil, err
+		}
+		includeSnippets := true
+		if args.IncludeSnippets != nil {
+			includeSnippets = *args.IncludeSnippets
+		}
+		results, err := s.vault.SearchNotes(brain.SearchNotesOptions{
+			Query:           args.Query,
+			Prefix:          args.Prefix,
+			Limit:           args.Limit,
+			IncludeSnippets: includeSnippets,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return toolResult(map[string]any{"results": results}), nil
 	case "brain_get_journal_config":
 		return toolResult(map[string]any{"journal": s.vault.JournalConfig()}), nil
 	case "brain_get_today_journal":
@@ -235,6 +279,25 @@ func (s *Server) callTool(raw json.RawMessage, auth AuthContext) (any, error) {
 			return nil, err
 		}
 		return toolResult(map[string]any{"journal": journal}), nil
+	case "brain_append_to_today_journal":
+		var args struct {
+			Content string `json:"content"`
+			Heading string `json:"heading"`
+		}
+		if err := json.Unmarshal(params.Arguments, &args); err != nil {
+			return nil, err
+		}
+		result, err := s.vault.AppendToTodayJournal(time.Now(), args.Heading, args.Content)
+		if err != nil {
+			return nil, err
+		}
+		return toolResult(map[string]any{
+			"success":          true,
+			"path":             result.Path,
+			"heading":          result.Heading,
+			"diff":             result.Diff,
+			"appended_preview": result.AppendedPreview,
+		}), nil
 	case "brain_find_recent_journals":
 		var args struct {
 			Limit int `json:"limit"`
@@ -449,9 +512,9 @@ func logToolError(toolName string, err error, auth AuthContext) {
 
 func RequiredScope(toolName string) string {
 	switch toolName {
-	case "brain_read_note", "brain_list_notes", "brain_get_section", "brain_show_diff", "brain_get_journal_config", "brain_get_today_journal", "brain_find_recent_journals":
+	case "brain_read_note", "brain_list_notes", "brain_search_notes", "brain_get_section", "brain_show_diff", "brain_get_journal_config", "brain_get_today_journal", "brain_find_recent_journals":
 		return "brain:read"
-	case "brain_apply_patch", "brain_write_note", "brain_create_note", "brain_append_section", "brain_replace_section", "brain_upsert_section", "brain_delete_duplicate_section", "brain_replace_text":
+	case "brain_apply_patch", "brain_write_note", "brain_create_note", "brain_append_to_today_journal", "brain_append_section", "brain_replace_section", "brain_upsert_section", "brain_delete_duplicate_section", "brain_replace_text":
 		return "brain:write"
 	case "brain_git_status", "brain_git_diff", "brain_git_commit":
 		return "brain:git"
@@ -485,11 +548,20 @@ func tools() []map[string]any {
 	stringArraySchema := map[string]any{"type": "array", "items": stringSchema}
 	readNoteOutput := objectSchema(map[string]any{"path": stringSchema, "content": stringSchema}, []string{"path", "content"})
 	listNotesOutput := objectSchema(map[string]any{"notes": stringArraySchema}, []string{"notes"})
+	searchResultOutput := objectSchema(map[string]any{
+		"path":             stringSchema,
+		"title":            stringSchema,
+		"score":            map[string]string{"type": "integer"},
+		"matched_headings": stringArraySchema,
+		"snippets":         stringArraySchema,
+	}, []string{"path", "title", "score", "matched_headings"})
+	searchNotesOutput := objectSchema(map[string]any{"results": map[string]any{"type": "array", "items": searchResultOutput}}, []string{"results"})
 	journalConfigOutput := objectSchema(map[string]any{"journal": objectSchema(map[string]any{"root": stringSchema, "daily_pattern": stringSchema, "monthly_pattern": stringSchema, "yearly_pattern": stringSchema}, []string{"root", "daily_pattern", "monthly_pattern", "yearly_pattern"})}, []string{"journal"})
 	journalNoteOutput := objectSchema(map[string]any{"journal": objectSchema(map[string]any{"path": stringSchema, "exists": boolSchema}, []string{"path", "exists"})}, []string{"journal"})
 	recentJournalsOutput := objectSchema(map[string]any{"journals": map[string]any{"type": "array", "items": objectSchema(map[string]any{"path": stringSchema, "exists": boolSchema}, []string{"path", "exists"})}}, []string{"journals"})
 	diffOutput := objectSchema(map[string]any{"path": stringSchema, "diff": stringSchema}, []string{"path", "diff"})
 	writeOutput := objectSchema(map[string]any{"success": boolSchema, "path": stringSchema, "diff": stringSchema}, []string{"success", "path", "diff"})
+	appendTodayOutput := objectSchema(map[string]any{"success": boolSchema, "path": stringSchema, "heading": stringSchema, "diff": stringSchema, "appended_preview": stringSchema}, []string{"success", "path", "diff", "appended_preview"})
 	createOutput := objectSchema(map[string]any{"path": stringSchema, "created": boolSchema, "bytes_written": map[string]string{"type": "integer"}, "message": stringSchema}, []string{"path", "created", "bytes_written", "message"})
 	statusOutput := objectSchema(map[string]any{"status": stringSchema}, []string{"status"})
 	gitDiffOutput := objectSchema(map[string]any{"diff": stringSchema}, []string{"diff"})
@@ -497,16 +569,18 @@ func tools() []map[string]any {
 	return []map[string]any{
 		tool("brain_read_note", "Read a Markdown note by relative path.", objectSchema(map[string]any{"path": stringSchema}, []string{"path"}), readNoteOutput, true, "brain:read"),
 		tool("brain_list_notes", "List Markdown notes under a directory prefix.", objectSchema(map[string]any{"prefix": stringSchema}, []string{}), listNotesOutput, true, "brain:read"),
+		tool("brain_search_notes", "Search Markdown notes by path, title, headings, and body text without returning full contents.", objectSchema(map[string]any{"query": stringSchema, "prefix": stringSchema, "limit": map[string]string{"type": "integer"}, "include_snippets": boolSchema}, []string{"query"}), searchNotesOutput, true, "brain:read"),
 		tool("brain_get_journal_config", "Return journal root and date patterns.", objectSchema(map[string]any{}, []string{}), journalConfigOutput, true, "brain:read"),
-		tool("brain_get_today_journal", "Resolve today's daily journal note path and whether it exists.", objectSchema(map[string]any{}, []string{}), journalNoteOutput, true, "brain:read"),
+		tool("brain_get_today_journal", "Read-only: resolve today's daily journal note path and whether it exists. For requests to write, add, log, or append content to today's Journal, use brain_append_to_today_journal instead.", objectSchema(map[string]any{}, []string{}), journalNoteOutput, true, "brain:read"),
+		tool("brain_append_to_today_journal", "Append Markdown content to today's Journal. Use this for requests like write to today's Journal, add to today's Journal, log this today, or append a note today. Resolves today's Journal path, creates the Journal if missing, appends to the named heading when provided, creates that heading if missing, or appends to the file end when heading is omitted.", objectSchema(map[string]any{"content": stringSchema, "heading": stringSchema}, []string{"content"}), appendTodayOutput, false, "brain:write"),
 		tool("brain_find_recent_journals", "List recent journal notes newest first.", objectSchema(map[string]any{"limit": map[string]string{"type": "integer"}}, []string{}), recentJournalsOutput, true, "brain:read"),
 		tool("brain_show_diff", "Show unified diff between current and proposed content.", objectSchema(map[string]any{"path": stringSchema, "new_content": stringSchema}, []string{"path", "new_content"}), diffOutput, true, "brain:read"),
 		tool("brain_apply_patch", "Apply proposed Markdown content after producing a diff.", objectSchema(map[string]any{"path": stringSchema, "proposed_content": stringSchema}, []string{"path", "proposed_content"}), writeOutput, false, "brain:write"),
 		tool("brain_create_note", "Create a new Markdown note without overwriting existing files.", objectSchema(map[string]any{"path": stringSchema, "content": stringSchema}, []string{"path", "content"}), createOutput, false, "brain:write"),
-		tool("brain_append_section", "Append Markdown content to an existing heading section.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema}, []string{"path", "heading", "content"}), writeOutput, false, "brain:write"),
+		tool("brain_append_section", "Append Markdown content to an existing heading section. For today's Journal append/write requests, prefer brain_append_to_today_journal.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema}, []string{"path", "heading", "content"}), writeOutput, false, "brain:write"),
 		tool("brain_get_section", "Read one Markdown section by exact heading line.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema}, []string{"path", "heading"}), readNoteOutput, true, "brain:read"),
 		tool("brain_replace_section", "Replace one Markdown section by exact heading line.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema}, []string{"path", "heading", "content"}), writeOutput, false, "brain:write"),
-		tool("brain_upsert_section", "Replace an exact heading section, or insert it under an optional parent heading.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema, "parent_heading": stringSchema}, []string{"path", "heading", "content"}), writeOutput, false, "brain:write"),
+		tool("brain_upsert_section", "Create or replace a section by exact heading line, optionally under a parent heading. For today's Journal append/write requests, prefer brain_append_to_today_journal.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "content": stringSchema, "parent_heading": stringSchema}, []string{"path", "heading", "content"}), writeOutput, false, "brain:write"),
 		tool("brain_delete_duplicate_section", "Delete duplicate exact heading sections while keeping first or last.", objectSchema(map[string]any{"path": stringSchema, "heading": stringSchema, "keep": stringSchema}, []string{"path", "heading", "keep"}), writeOutput, false, "brain:write"),
 		tool("brain_replace_text", "Replace one exact text occurrence in a Markdown note.", objectSchema(map[string]any{"path": stringSchema, "old_text": stringSchema, "new_text": stringSchema}, []string{"path", "old_text", "new_text"}), writeOutput, false, "brain:write"),
 		tool("brain_git_status", "Return git status for the Brain repository.", objectSchema(map[string]any{}, []string{}), statusOutput, true, "brain:git"),

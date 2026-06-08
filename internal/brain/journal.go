@@ -20,6 +20,13 @@ type JournalNote struct {
 	Exists bool   `json:"exists"`
 }
 
+type JournalAppendResult struct {
+	Path            string `json:"path"`
+	Heading         string `json:"heading,omitempty"`
+	Diff            string `json:"diff"`
+	AppendedPreview string `json:"appended_preview"`
+}
+
 func DefaultJournalConfig() JournalConfig {
 	return JournalConfig{
 		Root:           "Journal/",
@@ -40,6 +47,45 @@ func (v *Vault) TodayJournal(now time.Time) (JournalNote, error) {
 		return JournalNote{}, err
 	}
 	return JournalNote{Path: path, Exists: fileExists(abs)}, nil
+}
+
+func (v *Vault) AppendToTodayJournal(now time.Time, heading, content string) (JournalAppendResult, error) {
+	journal, err := v.TodayJournal(now)
+	if err != nil {
+		return JournalAppendResult{}, err
+	}
+	clean, abs, err := v.ResolveWritePath(journal.Path)
+	if err != nil {
+		return JournalAppendResult{}, err
+	}
+	oldBytes, err := os.ReadFile(abs)
+	if err != nil && !os.IsNotExist(err) {
+		return JournalAppendResult{}, v.filePathError(journal.Path, clean, abs, err)
+	}
+	oldContent := string(oldBytes)
+
+	heading = strings.TrimSpace(heading)
+	appended := normalizeJournalAppendContent(content)
+	nextContent := ""
+	if heading == "" {
+		nextContent = appendBlockToFile(oldContent, appended)
+	} else {
+		nextContent, heading, err = appendToJournalHeading(oldContent, heading, appended)
+		if err != nil {
+			return JournalAppendResult{}, err
+		}
+	}
+
+	clean, patch, err := v.ApplyPatch(clean, nextContent)
+	if err != nil {
+		return JournalAppendResult{}, err
+	}
+	return JournalAppendResult{
+		Path:            clean,
+		Heading:         heading,
+		Diff:            patch,
+		AppendedPreview: appendedPreview(appended),
+	}, nil
 }
 
 func (v *Vault) RecentJournals(limit int) ([]JournalNote, error) {
@@ -80,4 +126,43 @@ func journalDate(path string) (time.Time, bool) {
 func fileExists(path string) bool {
 	info, err := os.Stat(filepath.Clean(path))
 	return err == nil && !info.IsDir()
+}
+
+func appendToJournalHeading(markdown, heading, content string) (string, string, error) {
+	spec, err := parseHeadingSpec(heading)
+	if err != nil {
+		return "", "", err
+	}
+	headings := markdownHeadings(markdown)
+	idx := findHeading(headings, spec)
+	if idx >= 0 {
+		end := sectionEnd(markdown, headings, idx)
+		return markdown[:end] + appendContentBlock(markdown[headings[idx].end:end], normalizeSectionContent(content)) + markdown[end:], headings[idx].line, nil
+	}
+	headingLine := journalHeadingLine(heading)
+	return appendBlockToFile(markdown, formatSectionBlock(headingLine, content)), headingLine, nil
+}
+
+func journalHeadingLine(heading string) string {
+	heading = strings.TrimSpace(heading)
+	if parsed, ok := parseMarkdownHeading(heading, 0, len(heading)); ok {
+		return strings.Repeat("#", parsed.level) + " " + parsed.text
+	}
+	return "## " + heading
+}
+
+func normalizeJournalAppendContent(content string) string {
+	content = strings.Trim(content, "\n")
+	if content == "" {
+		return ""
+	}
+	return content + "\n"
+}
+
+func appendedPreview(content string) string {
+	content = strings.TrimSpace(content)
+	if len(content) <= 200 {
+		return content
+	}
+	return content[:200]
 }
