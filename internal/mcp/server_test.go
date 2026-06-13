@@ -137,7 +137,7 @@ func TestSectionToolsUpdateExistingHeading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if content != "# Self\n\n## Notes\n\nOld.\n\nNew.\n\n" {
+	if content != "## Notes\n\nOld.\n\nNew.\n\n" {
 		t.Fatalf("got content:\n%s", content)
 	}
 }
@@ -157,7 +157,7 @@ func TestCreateNoteToolCreatesNewMarkdownFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if content != "# Preferences\n" {
+	if content != "\n" {
 		t.Fatalf("got content %q", content)
 	}
 }

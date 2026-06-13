@@ -156,6 +156,7 @@ func (v *Vault) readWritableMarkdown(path string) (string, string, string, error
 }
 
 func (v *Vault) writeResolvedSection(clean, abs, content string) error {
+	content = sanitizeFilenameTitle(clean, content)
 	parent := filepath.Dir(abs)
 	if err := v.ensureNoSymlinkEscape(parent); err != nil {
 		return err
@@ -186,6 +187,7 @@ func editSection(markdown, heading, sectionContent string, appendContent bool) (
 		}
 	}
 
+	sectionContent = stripLeadingDuplicateHeading(sectionContent, headings[idx].line)
 	content := normalizeSectionContent(sectionContent)
 	if appendContent {
 		return markdown[:sectionEnd] + appendContentBlock(markdown[sectionStart:sectionEnd], content) + markdown[sectionEnd:], nil
@@ -200,6 +202,7 @@ func replaceSectionExact(markdown, heading, content string) (string, error) {
 	}
 	start := headings[idx].end
 	end := sectionEnd(markdown, headings, idx)
+	content = stripLeadingDuplicateHeading(content, headings[idx].line)
 	return markdown[:start] + normalizeSectionContent(content) + markdown[end:], nil
 }
 
@@ -215,10 +218,11 @@ func upsertSectionExact(markdown, heading, content, parentHeading string) (strin
 		idx := matches[0]
 		start := headings[idx].end
 		end := sectionEnd(markdown, headings, idx)
+		content = stripLeadingDuplicateHeading(content, headings[idx].line)
 		return markdown[:start] + normalizeSectionContent(content) + markdown[end:], nil
 	}
 
-	block := formatSectionBlock(heading, content)
+	block := formatSectionBlock(heading, stripLeadingDuplicateHeading(content, heading))
 	if parentHeading == "" {
 		return appendBlockToFile(markdown, block), nil
 	}
@@ -393,6 +397,43 @@ func appendContentBlock(existing, content string) string {
 
 func formatSectionBlock(heading, content string) string {
 	return strings.TrimSpace(heading) + "\n" + normalizeSectionContent(content)
+}
+
+func stripLeadingDuplicateHeading(content, targetHeading string) string {
+	lines := strings.SplitAfter(content, "\n")
+	first := firstNonblankLine(lines)
+	if first < 0 {
+		return content
+	}
+	if !sameMarkdownHeadingLine(trimLineEnding(lines[first]), targetHeading) {
+		return content
+	}
+	removeUntil := first + 1
+	if removeUntil < len(lines) && isBlankLine(lines[removeUntil]) {
+		removeUntil++
+	}
+	var out strings.Builder
+	for _, kept := range lines[:first] {
+		out.WriteString(kept)
+	}
+	for _, kept := range lines[removeUntil:] {
+		out.WriteString(kept)
+	}
+	return out.String()
+}
+
+func sameMarkdownHeadingLine(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	parsedA, okA := parseMarkdownHeading(a, 0, len(a))
+	parsedB, okB := parseMarkdownHeading(b, 0, len(b))
+	return okA && okB && parsedA.level == parsedB.level && parsedA.text == parsedB.text
 }
 
 func appendBlockToFile(markdown, block string) string {

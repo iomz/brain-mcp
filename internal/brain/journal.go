@@ -137,9 +137,11 @@ func appendToJournalHeading(markdown, heading, content string) (string, string, 
 	idx := findHeading(headings, spec)
 	if idx >= 0 {
 		end := sectionEnd(markdown, headings, idx)
+		content = stripLeadingDuplicateHeading(content, headings[idx].line)
 		return markdown[:end] + appendContentBlock(markdown[headings[idx].end:end], normalizeSectionContent(content)) + markdown[end:], headings[idx].line, nil
 	}
 	headingLine := journalHeadingLine(heading)
+	content = stripLeadingDuplicateHeading(content, headingLine)
 	return appendBlockToFile(markdown, formatSectionBlock(headingLine, content)), headingLine, nil
 }
 

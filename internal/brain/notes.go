@@ -46,6 +46,7 @@ func (v *Vault) CreateNote(path, content string) (string, int, error) {
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", 0, err
 	}
+	content = sanitizeFilenameTitle(clean, content)
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
@@ -73,10 +74,12 @@ func (v *Vault) ShowDiff(path, proposedContent string) (string, string, error) {
 			if resolveErr != nil {
 				return "", "", resolveErr
 			}
+			proposedContent = sanitizeFilenameTitle(clean, proposedContent)
 			return clean, diff.Unified(clean, "", proposedContent), nil
 		}
 		return "", "", err
 	}
+	proposedContent = sanitizeFilenameTitle(clean, proposedContent)
 	return clean, diff.Unified(clean, oldContent, proposedContent), nil
 }
 
@@ -85,7 +88,8 @@ func (v *Vault) ApplyPatch(path, proposedContent string) (string, string, error)
 	if err != nil {
 		return "", "", err
 	}
-	patch, err := v.diffForResolvedPath(clean, abs, proposedContent)
+	nextContent := sanitizeFilenameTitle(clean, proposedContent)
+	patch, err := v.diffForResolvedPath(clean, abs, nextContent)
 	if err != nil {
 		return "", "", err
 	}
@@ -96,7 +100,7 @@ func (v *Vault) ApplyPatch(path, proposedContent string) (string, string, error)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", "", err
 	}
-	if err := os.WriteFile(abs, []byte(proposedContent), 0o644); err != nil {
+	if err := os.WriteFile(abs, []byte(nextContent), 0o644); err != nil {
 		return "", "", err
 	}
 	log.Printf("brain_write path=%s diff_bytes=%d", clean, len(patch))

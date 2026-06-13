@@ -117,6 +117,29 @@ func TestAppendToTodayJournalCreatesMissingHeading(t *testing.T) {
 	}
 }
 
+func TestAppendToTodayJournalStripsLeadingDuplicateHeading(t *testing.T) {
+	v := testVault(t)
+	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+	writeNoteFile(t, v, "Journal/2026-06-05.md", "# Today\n\nExisting.\n")
+
+	result, err := v.AppendToTodayJournal(now, "Notes", "## Notes\n\nNew.")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Heading != "## Notes" {
+		t.Fatalf("got heading %q", result.Heading)
+	}
+	got := readNoteFile(t, v, "Journal/2026-06-05.md")
+	want := "# Today\n\nExisting.\n\n## Notes\n\nNew.\n\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Count(got, "## Notes") != 1 {
+		t.Fatalf("duplicate heading created:\n%s", got)
+	}
+}
+
 func TestAppendToTodayJournalCreatesMissingJournal(t *testing.T) {
 	v := testVault(t)
 	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)

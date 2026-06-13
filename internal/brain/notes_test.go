@@ -18,14 +18,14 @@ func TestReadWriteAndListNotes(t *testing.T) {
 		t.Fatalf("unexpected read: %q %q", path, content)
 	}
 
-	if _, _, err := v.ApplyPatch("Knowledge/Self.md", "# Self\n\nUpdated.\n"); err != nil {
+	if _, _, err := v.ApplyPatch("Knowledge/Self.md", "# Profile\n\nUpdated.\n"); err != nil {
 		t.Fatal(err)
 	}
 	_, content, err = v.ReadNote("Knowledge/Self.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if content != "# Self\n\nUpdated.\n" {
+	if content != "# Profile\n\nUpdated.\n" {
 		t.Fatalf("unexpected content: %q", content)
 	}
 
@@ -97,7 +97,7 @@ func TestListNotesCoversJournalNestedEmptyAndMissingDirs(t *testing.T) {
 func TestAllowedPathWriteSuccess(t *testing.T) {
 	v := testVault(t)
 
-	path, patch, err := v.ApplyPatch("System/Config.md", "# Config\n")
+	path, patch, err := v.ApplyPatch("System/Config.md", "# Settings\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestCreateNoteCreatesMarkdownNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(content) != "# Preferences\n\n- Sauna\n" {
+	if string(content) != "- Sauna\n" {
 		t.Fatalf("got content %q", content)
 	}
 	if bytesWritten != len(content) {
@@ -145,7 +145,7 @@ func TestCreateNoteCreatesParentDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(content) != "# Sauna\n" {
+	if string(content) != "\n" {
 		t.Fatalf("got content %q", content)
 	}
 }
@@ -197,7 +197,7 @@ func TestCreateNoteEnsuresFinalNewline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(content) != "# Newline\n" {
+	if string(content) != "\n" {
 		t.Fatalf("got content %q", content)
 	}
 }
@@ -205,7 +205,7 @@ func TestCreateNoteEnsuresFinalNewline(t *testing.T) {
 func TestCreateNoteWritesUTF8Content(t *testing.T) {
 	v := testVault(t)
 
-	want := "# Preferences\n\n- 温泉とサウナ\n"
+	want := "# Favorite Gear\n\n- 温泉とサウナ\n"
 	if _, _, err := v.CreateNote("Knowledge/UTF8.md", want); err != nil {
 		t.Fatal(err)
 	}

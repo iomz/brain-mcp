@@ -21,12 +21,31 @@ func TestAppendSectionPreservesRestOfFileAndReturnsDiff(t *testing.T) {
 		t.Fatalf("got path %q", path)
 	}
 	got := readNoteFile(t, v, "Knowledge/Self.md")
-	want := "# Self\n\nIntro.\n\n## Notes\n\nOld note.\n\nNew note.\n\n## Tasks\n\n- Keep\n"
+	want := "Intro.\n\n## Notes\n\nOld note.\n\nNew note.\n\n## Tasks\n\n- Keep\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
 	if !strings.Contains(patch, "+New note.") {
 		t.Fatalf("diff missing appended content:\n%s", patch)
+	}
+}
+
+func TestAppendSectionStripsLeadingDuplicateHeadingFromContent(t *testing.T) {
+	v := testVault(t)
+	writeNoteFile(t, v, "Knowledge/Self.md", "# Self\n\n## Notes\n\nOld note.\n")
+
+	_, _, err := v.AppendSection("Knowledge/Self.md", "Notes", "## Notes\n\nNew note.")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readNoteFile(t, v, "Knowledge/Self.md")
+	want := "## Notes\n\nOld note.\n\nNew note.\n\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Count(got, "## Notes") != 1 {
+		t.Fatalf("duplicate heading created:\n%s", got)
 	}
 }
 
@@ -58,12 +77,31 @@ func TestReplaceSectionPreservesSurroundingSections(t *testing.T) {
 	}
 
 	got := readNoteFile(t, v, "Knowledge/Self.md")
-	want := "# Self\n\nIntro.\n\n## Profile\n\nNew profile.\n\n### Detail\n\nNew detail.\n\n## Tasks\n\n- Keep\n"
+	want := "Intro.\n\n## Profile\n\nNew profile.\n\n### Detail\n\nNew detail.\n\n## Tasks\n\n- Keep\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
 	if !strings.Contains(patch, "-Old profile.") || !strings.Contains(patch, "+New profile.") {
 		t.Fatalf("diff missing replacement:\n%s", patch)
+	}
+}
+
+func TestReplaceSectionStripsLeadingDuplicateHeadingFromContent(t *testing.T) {
+	v := testVault(t)
+	writeNoteFile(t, v, "Knowledge/Self.md", "# Self\n\n## Profile\n\nOld profile.\n")
+
+	_, _, err := v.ReplaceSection("Knowledge/Self.md", "## Profile", "## Profile\n\nNew profile.")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readNoteFile(t, v, "Knowledge/Self.md")
+	want := "## Profile\n\nNew profile.\n\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Count(got, "## Profile") != 1 {
+		t.Fatalf("duplicate heading created:\n%s", got)
 	}
 }
 
@@ -86,7 +124,45 @@ func TestUpsertSectionReplacesExistingInsteadOfDuplicating(t *testing.T) {
 	}
 
 	got := readNoteFile(t, v, "Knowledge/Self.md")
-	want := "# Self\n\n## Notes\n\nNew.\n\n"
+	want := "## Notes\n\nNew.\n\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Count(got, "## Notes") != 1 {
+		t.Fatalf("duplicate heading created:\n%s", got)
+	}
+}
+
+func TestUpsertSectionStripsLeadingDuplicateHeadingWhenCreating(t *testing.T) {
+	v := testVault(t)
+	writeNoteFile(t, v, "Knowledge/Self.md", "# Self\n\nIntro.\n")
+
+	_, _, err := v.UpsertSection("Knowledge/Self.md", "# A new section", "# A new section\n\nThe content of the new section...", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readNoteFile(t, v, "Knowledge/Self.md")
+	want := "Intro.\n\n# A new section\n\nThe content of the new section...\n\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Count(got, "# A new section") != 1 {
+		t.Fatalf("duplicate heading created:\n%s", got)
+	}
+}
+
+func TestUpsertSectionStripsLeadingDuplicateHeadingWhenReplacing(t *testing.T) {
+	v := testVault(t)
+	writeNoteFile(t, v, "Knowledge/Self.md", "# Self\n\n## Notes\n\nOld.\n")
+
+	_, _, err := v.UpsertSection("Knowledge/Self.md", "## Notes", "## Notes\n\nNew.", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readNoteFile(t, v, "Knowledge/Self.md")
+	want := "## Notes\n\nNew.\n\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -105,7 +181,7 @@ func TestUpsertSectionInsertsUnderParentHeadingWhenMissing(t *testing.T) {
 	}
 
 	got := readNoteFile(t, v, "Knowledge/Self.md")
-	want := "# Self\n\n## Parent\n\nParent body.\n\n### Child\n\nChild body.\n\n## Sibling\n\nKeep.\n"
+	want := "## Parent\n\nParent body.\n\n### Child\n\nChild body.\n\n## Sibling\n\nKeep.\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -184,7 +260,7 @@ func TestDeleteDuplicateSectionKeepsFirst(t *testing.T) {
 	}
 
 	got := readNoteFile(t, v, "Knowledge/Self.md")
-	want := "# Self\n\n## Notes\n\nOne.\n\n## Other\n\nKeep.\n\n"
+	want := "## Notes\n\nOne.\n\n## Other\n\nKeep.\n\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -200,7 +276,7 @@ func TestDeleteDuplicateSectionKeepsLast(t *testing.T) {
 	}
 
 	got := readNoteFile(t, v, "Knowledge/Self.md")
-	want := "# Self\n\n## Other\n\nKeep.\n\n## Notes\n\nTwo.\n"
+	want := "## Other\n\nKeep.\n\n## Notes\n\nTwo.\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -208,7 +284,7 @@ func TestDeleteDuplicateSectionKeepsLast(t *testing.T) {
 
 func TestDeleteDuplicateSectionNoOpsWithOneSection(t *testing.T) {
 	v := testVault(t)
-	writeNoteFile(t, v, "Knowledge/Self.md", "# Self\n\n## Notes\n\nOne.\n")
+	writeNoteFile(t, v, "Knowledge/Self.md", "# Profile\n\n## Notes\n\nOne.\n")
 
 	_, patch, err := v.DeleteDuplicateSection("Knowledge/Self.md", "## Notes", "first")
 	if err != nil {
@@ -216,7 +292,7 @@ func TestDeleteDuplicateSectionNoOpsWithOneSection(t *testing.T) {
 	}
 
 	got := readNoteFile(t, v, "Knowledge/Self.md")
-	want := "# Self\n\n## Notes\n\nOne.\n"
+	want := "# Profile\n\n## Notes\n\nOne.\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -235,7 +311,7 @@ func TestReplaceTextReplacesExactlyOneOccurrence(t *testing.T) {
 	}
 
 	got := readNoteFile(t, v, "Knowledge/Self.md")
-	if got != "# Self\n\nNew sentence.\n" {
+	if got != "New sentence.\n" {
 		t.Fatalf("got:\n%s", got)
 	}
 	if !strings.Contains(patch, "-Old sentence.") || !strings.Contains(patch, "+New sentence.") {
