@@ -94,7 +94,7 @@ type Policy struct {
 }
 
 func DefaultWritablePaths() []string {
-	return []string{"Knowledge/", "System/", "Active/", "Archive/", "Journal/"}
+	return []string{"."}
 }
 
 func DefaultReadonlyPaths() []string {
@@ -166,10 +166,10 @@ func (v *Vault) resolve(rel string, write bool) (string, string, error) {
 		return "", "", v.pathError(rel, clean, filepath.Join(v.root, clean), ReasonPathValidationFailed, ErrNotMarkdown)
 	}
 	if write {
+		if matchesPrefix(clean, v.readonlyPaths) {
+			return "", "", v.pathError(rel, clean, filepath.Join(v.root, clean), ReasonReadOnlyRoot, ErrReadOnlyPath)
+		}
 		if !matchesPrefix(clean, v.writablePaths) {
-			if matchesPrefix(clean, v.readonlyPaths) {
-				return "", "", v.pathError(rel, clean, filepath.Join(v.root, clean), ReasonReadOnlyRoot, ErrReadOnlyPath)
-			}
 			return "", "", v.pathError(rel, clean, filepath.Join(v.root, clean), ReasonPathOutsideVault, ErrPathForbidden)
 		}
 	} else if !matchesPrefix(clean, append(v.writablePaths, v.readonlyPaths...)) {
@@ -226,7 +226,11 @@ func normalizePrefixes(prefixes []string) []string {
 			continue
 		}
 		prefix = filepath.ToSlash(filepath.Clean(prefix))
-		if prefix == "." || strings.HasPrefix(prefix, ".") || strings.Contains(prefix, "..") || strings.HasPrefix(prefix, "/") {
+		if prefix == "." {
+			out = append(out, prefix)
+			continue
+		}
+		if strings.HasPrefix(prefix, ".") || strings.Contains(prefix, "..") || strings.HasPrefix(prefix, "/") {
 			continue
 		}
 		out = append(out, strings.TrimSuffix(prefix, "/")+"/")
@@ -240,6 +244,9 @@ func matchesPrefix(path string, prefixes []string) bool {
 		return true
 	}
 	for _, prefix := range prefixes {
+		if prefix == "." {
+			return true
+		}
 		dir := strings.TrimSuffix(prefix, "/")
 		if slashPath == dir || strings.HasPrefix(slashPath, prefix) {
 			return true

@@ -94,6 +94,29 @@ func TestListNotesCoversJournalNestedEmptyAndMissingDirs(t *testing.T) {
 	}
 }
 
+func TestListNotesFiltersNotesOutsideReadablePolicy(t *testing.T) {
+	v := testVaultWithPolicy(t, Policy{
+		WritablePaths: []string{"Knowledge/"},
+		RequireGit:    false,
+	})
+	if err := os.MkdirAll(filepath.Join(v.Root(), "Projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v.Root(), "Projects", "Hidden.md"), []byte("# Hidden\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	notes, err := v.ListNotes("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, note := range notes {
+		if note == "Projects/Hidden.md" {
+			t.Fatalf("listed note outside readable policy: %v", notes)
+		}
+	}
+}
+
 func TestAllowedPathWriteSuccess(t *testing.T) {
 	v := testVault(t)
 

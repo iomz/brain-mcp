@@ -145,7 +145,7 @@ func TestSectionToolsUpdateExistingHeading(t *testing.T) {
 func TestCreateNoteToolCreatesNewMarkdownFile(t *testing.T) {
 	server := testServer(t)
 
-	resp, err := server.HandleBytes([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_create_note","arguments":{"path":"Knowledge/Preferences.md","content":"# Preferences"}}}`))
+	resp, err := server.HandleBytes([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"brain_create_note","arguments":{"path":"Projects/Preferences.md","content":"# Preferences"}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestCreateNoteToolCreatesNewMarkdownFile(t *testing.T) {
 	if !strings.Contains(text, `"created":true`) || !strings.Contains(text, `"bytes_written"`) {
 		t.Fatalf("response missing create fields: %s", resp)
 	}
-	_, content, err := server.vault.ReadNote("Knowledge/Preferences.md")
+	_, content, err := server.vault.ReadNote("Projects/Preferences.md")
 	if err != nil {
 		t.Fatal(err)
 	}

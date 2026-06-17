@@ -111,8 +111,8 @@ CLOUDFLARED_TUNNEL_TOKEN=replace-with-cloudflare-token
 | `BRAIN_MCP_ALLOWED_EMAILS` | none | Comma-separated OAuth email allowlist. At least one email, subject, or group allowlist is required for OAuth tokens. |
 | `BRAIN_MCP_ALLOWED_SUBJECTS` | none | Comma-separated OAuth subject allowlist. |
 | `BRAIN_MCP_ALLOWED_GROUPS` | none | Comma-separated OAuth group allowlist. |
-| `BRAIN_MCP_WRITABLE_PATHS` | `Knowledge/,System/,Active/,Archive/,Journal/` | Comma-separated writable prefixes. |
-| `BRAIN_MCP_READONLY_PATHS` | none | Comma-separated read-only prefixes. Put `Journal/` here only when journal editing should be blocked. |
+| `BRAIN_MCP_WRITABLE_PATHS` | `.` | Comma-separated writable prefixes. `.` allows Markdown writes anywhere inside the vault. |
+| `BRAIN_MCP_READONLY_PATHS` | none | Comma-separated read-only prefixes. Read-only prefixes override writable prefixes, including `.`. |
 | `BRAIN_MCP_REQUIRE_GIT` | `true` | Require `BRAIN_ROOT` to contain `.git`. |
 | `CLOUDFLARED_TUNNEL_TOKEN` | none | Cloudflare tunnel token used by Compose. |
 

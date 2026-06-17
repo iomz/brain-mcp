@@ -21,7 +21,6 @@ func TestPathValidationRejectsUnsafePaths(t *testing.T) {
 		{"hidden", ".secret/Self.md", ErrHiddenPath},
 		{".git", ".git/config.md", ErrHiddenPath},
 		{"non markdown write", "Knowledge/Self.txt", ErrNotMarkdown},
-		{"forbidden write", "Inbox/Note.md", ErrPathForbidden},
 	}
 
 	for _, tt := range tests {
@@ -31,6 +30,31 @@ func TestPathValidationRejectsUnsafePaths(t *testing.T) {
 				t.Fatalf("got %v, want %v", err, tt.err)
 			}
 		})
+	}
+}
+
+func TestDefaultPolicyAllowsMarkdownAnywhereInVault(t *testing.T) {
+	v := testVault(t)
+
+	clean, _, err := v.ResolveWritePath("Projects/Brain MCP/Design.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clean != "Projects/Brain MCP/Design.md" {
+		t.Fatalf("got %q", clean)
+	}
+}
+
+func TestReadonlyPathOverridesVaultRootWriteAccess(t *testing.T) {
+	v := testVaultWithPolicy(t, Policy{
+		WritablePaths: []string{"."},
+		ReadonlyPaths: []string{"Archive/"},
+		RequireGit:    false,
+	})
+
+	_, _, err := v.ResolveWritePath("Archive/Old.md")
+	if !errors.Is(err, ErrReadOnlyPath) {
+		t.Fatalf("got %v, want %v", err, ErrReadOnlyPath)
 	}
 }
 

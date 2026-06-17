@@ -144,7 +144,11 @@ func (v *Vault) ListNotes(dir string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		notes = append(notes, filepath.ToSlash(rel))
+		cleanPath := filepath.ToSlash(rel)
+		if !matchesPrefix(cleanPath, append(v.writablePaths, v.readonlyPaths...)) {
+			return nil
+		}
+		notes = append(notes, cleanPath)
 		return nil
 	})
 	if err != nil {
